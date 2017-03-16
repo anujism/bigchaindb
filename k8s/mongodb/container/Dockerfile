@@ -3,7 +3,7 @@ LABEL maintainer "dev@bigchaindb.com"
 WORKDIR /
 RUN apt-get update \
     && apt-get -y upgrade \
-    && apt-get autoremove \
+    && apt-get -y autoremove \
     && apt-get clean
 COPY mongod.conf.template /etc/mongod.conf.template
 COPY mongod_entrypoint/mongod_entrypoint /
