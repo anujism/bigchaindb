@@ -1,11 +1,20 @@
 import pytest
 
 from bigchaindb.common import crypto
+from bigchaindb.common.exceptions import ValidationError
 
 
 def post_tx(b, client, tx):
-    import json
-    response = client.post('/api/v1/transactions/', data=json.dumps(tx.to_dict()))
+    class Response():
+        status_code = None
+
+    response = Response()
+    try:
+        b.validate_transaction(tx)
+        response.status_code = 202
+    except ValidationError:
+        response.status_code = 400
+
     if response.status_code == 202:
         mine(b, [tx])
     return response
@@ -63,34 +72,34 @@ def transfer_script(b, client, user_pub, user_priv, input_tx, metadata=None):
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_script_query_outputs(b, client):
+def test_asset_script_query_outputs(b_policy, client):
     user_priv, user_pub = crypto.generate_key_pair()
 
     # balance == 0
     # balance < 1 should raise
     script = "if len(bigchain.get_outputs_filtered('{}', True)) == 0: raise".format(user_pub)
-    create_tx, response = create_script(b, client, user_pub, user_priv, script=script)
+    create_tx, response = create_script(b_policy, client, user_pub, user_priv, script=script)
     assert response.status_code == 400
 
     tx = create_simple_tx(user_pub, user_priv)
-    mine(b, [tx])
+    mine(b_policy, [tx])
     # balance == 1
-    create_tx, response = create_script(b, client, user_pub, user_priv, script=script)
+    create_tx, response = create_script(b_policy, client, user_pub, user_priv, script=script)
     assert response.status_code == 202
     # balance == 2
-    _, response = transfer_script(b, client, user_pub, user_priv, create_tx)
+    _, response = transfer_script(b_policy, client, user_pub, user_priv, create_tx)
     assert response.status_code == 202
     # balance == 3
     script = "if len(bigchain.get_outputs_filtered('{}', True)) != 3 : raise".format(user_pub)
-    _, response = create_script(b, client, user_pub, user_priv, script=script)
+    _, response = create_script(b_policy, client, user_pub, user_priv, script=script)
     assert response.status_code == 202
 
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_scripts_that_should_fail(b, client, user_pk):
+def test_asset_scripts_that_should_fail(b_policy, client, user_pk):
     user_priv, user_pub = crypto.generate_key_pair()
-    input_tx = b.get_owned_ids(user_pk).pop()
+    input_tx = b_policy.get_owned_ids(user_pk).pop()
 
     scripts_that_should_fail = [
         "while(True): pass",
@@ -100,64 +109,64 @@ def test_asset_scripts_that_should_fail(b, client, user_pk):
     ]
 
     for script in scripts_that_should_fail:
-        create_tx, response = create_script(b, client, user_pub, user_priv, script=script)
+        create_tx, response = create_script(b_policy, client, user_pub, user_priv, script=script)
         assert response.status_code == 400
 
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_script_self_outputs(b, client):
+def test_asset_script_self_outputs(b_policy, client):
     user_priv, user_pub = crypto.generate_key_pair()
 
     # always make sure that outputs[0] involves user_pub
     script = "if '{}' not in self.outputs[0].public_keys: raise".format(user_pub)
-    create_tx, response = create_script(b, client, user_pub, user_priv, script=script)
+    create_tx, response = create_script(b_policy, client, user_pub, user_priv, script=script)
     assert response.status_code == 202
     # transfer to user_pub
-    transfer_tx, response = transfer_script(b, client, user_pub, user_priv, input_tx=create_tx)
+    transfer_tx, response = transfer_script(b_policy, client, user_pub, user_priv, input_tx=create_tx)
     assert response.status_code == 202
     # fail: transfer to user_priv
-    _, response = transfer_script(b, client, user_priv, user_priv, input_tx=transfer_tx)
+    _, response = transfer_script(b_policy, client, user_priv, user_priv, input_tx=transfer_tx)
     assert response.status_code == 400
 
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_script_self_operation(b, client):
+def test_asset_script_self_operation(b_policy, client):
     user_priv, user_pub = crypto.generate_key_pair()
 
     script = "if self.operation != 'CREATE': raise"
-    create_tx, response = create_script(b, client, user_pub, user_priv, script=script)
+    create_tx, response = create_script(b_policy, client, user_pub, user_priv, script=script)
     assert response.status_code == 202
-    transfer_tx, response = transfer_script(b, client, user_pub, user_priv, input_tx=create_tx)
+    transfer_tx, response = transfer_script(b_policy, client, user_pub, user_priv, input_tx=create_tx)
     assert response.status_code == 400
 
     script = "if self.operation not in ['CREATE', 'TRANSFER']: raise"
-    create_tx, response = create_script(b, client, user_pub, user_priv, script=script)
+    create_tx, response = create_script(b_policy, client, user_pub, user_priv, script=script)
     assert response.status_code == 202
-    transfer_tx, response = transfer_script(b, client, user_pub, user_priv, input_tx=create_tx)
+    transfer_tx, response = transfer_script(b_policy, client, user_pub, user_priv, input_tx=create_tx)
     assert response.status_code == 202
 
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_script_query_transactions(b, client):
+def test_asset_script_query_transactions(b_policy, client):
     alice_priv, alice_pub = crypto.generate_key_pair()
     bob_priv, bob_pub = crypto.generate_key_pair()
 
     proof_tx = create_simple_tx(bob_pub, bob_priv)
 
     script = "if not bigchain.get_transaction('{}'): raise".format(proof_tx.id)
-    create_tx, response = create_script(b, client, alice_pub, alice_priv, script=script)
+    create_tx, response = create_script(b_policy, client, alice_pub, alice_priv, script=script)
     assert response.status_code == 400
 
-    response = post_tx(b, client, proof_tx)
+    response = post_tx(b_policy, client, proof_tx)
     assert response.status_code == 202
 
-    create_tx, response = create_script(b, client, alice_pub, alice_priv, script=script)
+    create_tx, response = create_script(b_policy, client, alice_pub, alice_priv, script=script)
     assert response.status_code == 202
 
-    transfer_tx, response = transfer_script(b, client, bob_pub, alice_priv, input_tx=create_tx)
+    transfer_tx, response = transfer_script(b_policy, client, bob_pub, alice_priv, input_tx=create_tx)
     assert response.status_code == 202
 
 
@@ -180,7 +189,7 @@ if self.operation == 'TRANSFER' and counterparty in self.inputs[0].owners_before
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_script_exchange(b, client):
+def test_asset_script_exchange(b_policy, client):
     alice_priv, alice_pub = crypto.generate_key_pair()
     bob_priv, bob_pub = crypto.generate_key_pair()
     carly_priv, carly_pub = crypto.generate_key_pair()
@@ -188,35 +197,35 @@ def test_asset_script_exchange(b, client):
     # alice: 0 - bob: 0 - carly: 0
     create_tx_alice = create_simple_tx(alice_pub, alice_priv,
                                        asset={'script': SCRIPT_EXCHANGE.format(bob_pub, alice_pub)})
-    response = post_tx(b, client, create_tx_alice)
+    response = post_tx(b_policy, client, create_tx_alice)
     assert response.status_code == 202
     # alice: 1 - bob: 0 - carly: 0
 
-    transfer_tx_alice_bob, response = transfer_script(b, client, bob_pub, alice_priv, input_tx=create_tx_alice)
+    transfer_tx_alice_bob, response = transfer_script(b_policy, client, bob_pub, alice_priv, input_tx=create_tx_alice)
     assert response.status_code == 202
     # alice: 0 - bob: 1 - carly: 0
 
-    transfer_tx_bob_carly, response = transfer_script(b, client, carly_pub, bob_priv, input_tx=transfer_tx_alice_bob)
+    transfer_tx_bob_carly, response = transfer_script(b_policy, client, carly_pub, bob_priv, input_tx=transfer_tx_alice_bob)
     assert response.status_code == 400
 
     create_tx_bob = create_simple_tx(bob_pub, bob_priv,
                                      asset={'script': SCRIPT_EXCHANGE.format(alice_pub, bob_pub)})
-    response = post_tx(b, client, create_tx_bob)
+    response = post_tx(b_policy, client, create_tx_bob)
     assert response.status_code == 202
     # alice: 0 - bob: 2 - carly: 0
 
-    transfer_tx_bob_alice, response = transfer_script(b, client, alice_pub, bob_priv, input_tx=transfer_tx_alice_bob)
+    transfer_tx_bob_alice, response = transfer_script(b_policy, client, alice_pub, bob_priv, input_tx=transfer_tx_alice_bob)
     assert response.status_code == 400
 
-    settling_tx_bob_alice, response = transfer_script(b, client, alice_pub, bob_priv, input_tx=create_tx_bob)
+    settling_tx_bob_alice, response = transfer_script(b_policy, client, alice_pub, bob_priv, input_tx=create_tx_bob)
     assert response.status_code == 202
     # alice: 1 - bob: 1 - carly: 0
 
-    transfer_tx_bob_carly, response = transfer_script(b, client, carly_pub, bob_priv, input_tx=transfer_tx_alice_bob)
+    transfer_tx_bob_carly, response = transfer_script(b_policy, client, carly_pub, bob_priv, input_tx=transfer_tx_alice_bob)
     assert response.status_code == 202
     # alice: 1 - bob: 0 - carly: 1
 
-    settling_tx_alice_carly, response = transfer_script(b, client, carly_pub, alice_priv,
+    settling_tx_alice_carly, response = transfer_script(b_policy, client, carly_pub, alice_priv,
                                                         input_tx=settling_tx_bob_alice)
     assert response.status_code == 202
     # alice: 0 - bob: 0 - carly: 2
@@ -231,7 +240,7 @@ if value > 0:
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_script_metadata_stream(b, client):
+def test_asset_script_metadata_stream(b_policy, client):
     stream_priv, stream_pub = crypto.generate_key_pair()
 
     metadata = {'value': 0}
@@ -239,15 +248,15 @@ def test_asset_script_metadata_stream(b, client):
                                         asset={'script': SCRIPT_METADATA_STREAM},
                                         metadata=metadata)
 
-    response = post_tx(b, client, create_tx_stream)
+    response = post_tx(b_policy, client, create_tx_stream)
     assert response.status_code == 202
 
-    transfer_tx_stream, response = transfer_script(b, client, stream_pub, stream_priv,
+    transfer_tx_stream, response = transfer_script(b_policy, client, stream_pub, stream_priv,
                                                    input_tx=create_tx_stream,
                                                    metadata=metadata)
     assert response.status_code == 202
 
-    transfer_tx_stream, response = transfer_script(b, client, stream_pub, stream_priv,
+    transfer_tx_stream, response = transfer_script(b_policy, client, stream_pub, stream_priv,
                                                    input_tx=transfer_tx_stream,
                                                    metadata={'value': 1})
     assert response.status_code == 400
@@ -267,7 +276,7 @@ if self.operation == 'TRANSFER':
 
 @pytest.mark.bdb
 @pytest.mark.usefixtures('inputs')
-def test_asset_script_metadata_stream_and_input(b, client):
+def test_asset_script_metadata_stream_and_input(b_policy, client):
     stream_priv, stream_pub = crypto.generate_key_pair()
 
     metadata = {'value': 0}
@@ -275,20 +284,20 @@ def test_asset_script_metadata_stream_and_input(b, client):
                                         asset={'script': SCRIPT_METADATA_STREAM_AND_INPUT_TX},
                                         metadata=metadata)
 
-    response = post_tx(b, client, create_tx_stream)
+    response = post_tx(b_policy, client, create_tx_stream)
     assert response.status_code == 202
 
-    transfer_tx_stream, response = transfer_script(b, client, stream_pub, stream_priv,
+    transfer_tx_stream, response = transfer_script(b_policy, client, stream_pub, stream_priv,
                                                    input_tx=create_tx_stream,
                                                    metadata=metadata)
     assert response.status_code == 202
 
-    transfer_tx_stream, response = transfer_script(b, client, stream_pub, stream_priv,
+    transfer_tx_stream, response = transfer_script(b_policy, client, stream_pub, stream_priv,
                                                    input_tx=transfer_tx_stream,
                                                    metadata={'value': -1})
     assert response.status_code == 202
 
-    transfer_tx_stream, response = transfer_script(b, client, stream_pub, stream_priv,
+    transfer_tx_stream, response = transfer_script(b_policy, client, stream_pub, stream_priv,
                                                    input_tx=transfer_tx_stream,
                                                    metadata={'value': 1})
     assert response.status_code == 400
